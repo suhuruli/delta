@@ -31,6 +31,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, TableChange}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -2451,6 +2452,28 @@ class DeltaAlterTableByNameSuite
     }
   }
 
+  test("catalog API: setting the provider property to delta is a no-op") {
+    // SQL rejects the reserved `provider` property at parse time, but the catalog API does not.
+    // Spark Declarative Pipelines sets it whenever it updates an existing table.
+    withTable("delta_provider") {
+      sql("CREATE TABLE delta_provider (v1 int) USING delta")
+      val catalog = spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
+      val ident = Identifier.of(Array("default"), "delta_provider")
+
+      catalog.alterTable(
+        ident,
+        TableChange.setProperty(TableCatalog.PROP_PROVIDER, "DELTA"),
+        TableChange.setProperty("key", "value"))
+      val (_, snapshot) = getDeltaLogWithSnapshot("delta_provider")
+      assertEqual(snapshot.metadata.configuration, Map("key" -> "value"))
+
+      checkError(
+        intercept[DeltaAnalysisException] {
+          catalog.alterTable(ident, TableChange.setProperty(TableCatalog.PROP_PROVIDER, "json"))
+        },
+        "DELTA_CANNOT_CHANGE_PROVIDER")
+    }
+  }
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest

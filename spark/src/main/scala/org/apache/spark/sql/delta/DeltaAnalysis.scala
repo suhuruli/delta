@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.catalog.{DeltaCommandRowLevelDelete, DeltaCommandRowLevelUpdate}
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.catalog.DeltaCatalogV1
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
@@ -622,34 +623,23 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     // DML - TODO: Remove these Delta-specific DML logical plans and use Spark's plans directly
 
-    case d @ DeleteFromTable(table, condition) if d.childrenResolved =>
-      // rewrites Delta from V2 to V1
-      val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
-      val indices = newTarget.collect {
-        case DeltaFullTable(_, index) => index
-      }
-      if (indices.isEmpty) {
-        // Not a Delta table at all, do not transform
-        d
-      } else if (indices.size == 1 && indices(0).deltaLog.tableExists) {
-        // It is a well-defined Delta table with a schema
-        DeltaDelete(newTarget, Some(condition))
-      } else {
-        // Not a well-defined Delta table
-        throw DeltaErrors.notADeltaSourceException("DELETE", Some(d))
-      }
+    case d @ DeleteFromTable(_, _) if d.childrenResolved =>
+      resolveDeleteFromTable(d)
 
-    case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
-      val (cols, expressions) = assignments.map(a => a.key -> a.value).unzip
-      // rewrites Delta from V2 to V1
-      val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
-        newTable.collectLeaves().headOption match {
-          case Some(DeltaFullTable(_, index)) =>
-            DeltaUpdateTable(newTable, cols, expressions, condition)
-          case o =>
-            // not a Delta table
-            u
-        }
+    case DeltaCommandRowLevelDelete(originalTable, condition) =>
+      // When the Delta table advertises DSv2 row-level operations (see
+      // DeltaSQLConf.DSV2_ROW_LEVEL_OPERATIONS_ENABLED), Spark's RewriteDeleteFromTable runs
+      // before this rule and turns the DELETE into a ReplaceData plan. Recover the original
+      // DELETE and execute it with Delta's own command instead.
+      resolveDeleteFromTable(DeleteFromTable(originalTable, condition))
+
+    case u @ UpdateTable(_, _, _) if u.childrenResolved =>
+      resolveUpdateTable(u)
+
+    case DeltaCommandRowLevelUpdate(originalTable, assignments, condition) =>
+      // Same as for DELETE above: recover the UPDATE that Spark's RewriteUpdateTable turned into
+      // a ReplaceData plan, and execute it with Delta's own command instead.
+      resolveUpdateTable(UpdateTable(originalTable, assignments, Some(condition)))
 
 
     case merge: MergeIntoTable if merge.childrenResolved =>
@@ -1039,6 +1029,37 @@ class DeltaAnalysis(protected val session: SparkSession)
     }
   }
 
+
+  private def resolveUpdateTable(u: UpdateTable): LogicalPlan = {
+    val (cols, expressions) = u.assignments.map(a => a.key -> a.value).unzip
+    // rewrites Delta from V2 to V1
+    val newTable = stripTempViewWrapper(u.table).transformUp { case DeltaRelation(lr) => lr }
+    newTable.collectLeaves().headOption match {
+      case Some(DeltaFullTable(_, index)) =>
+        DeltaUpdateTable(newTable, cols, expressions, u.condition)
+      case o =>
+        // not a Delta table
+        u
+    }
+  }
+
+  private def resolveDeleteFromTable(d: DeleteFromTable): LogicalPlan = {
+    // rewrites Delta from V2 to V1
+    val newTarget = stripTempViewWrapper(d.table).transformUp { case DeltaRelation(lr) => lr }
+    val indices = newTarget.collect {
+      case DeltaFullTable(_, index) => index
+    }
+    if (indices.isEmpty) {
+      // Not a Delta table at all, do not transform
+      d
+    } else if (indices.size == 1 && indices(0).deltaLog.tableExists) {
+      // It is a well-defined Delta table with a schema
+      DeltaDelete(newTarget, Some(d.condition))
+    } else {
+      // Not a well-defined Delta table
+      throw DeltaErrors.notADeltaSourceException("DELETE", Some(d))
+    }
+  }
 
   private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
     DeltaViewHelper.stripTempView(plan, conf)

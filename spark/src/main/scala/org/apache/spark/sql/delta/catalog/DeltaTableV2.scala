@@ -42,12 +42,12 @@ import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.{SupportsRowLevelOperations, SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, RowLevelOperation, RowLevelOperationBuilder, RowLevelOperationInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
@@ -432,8 +432,8 @@ class DeltaTableV2 private(
     timeTravelOpt: Option[DeltaTimeTravelSpec] = this.timeTravelOpt,
     options: Map[String, String] = this.options
   ): DeltaTableV2 = {
-    val deltaTableV2 =
-      new DeltaTableV2(spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+    val deltaTableV2 = DeltaTableV2.newInstance(
+      spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
     deltaTableV2.pathInfo.timeTravelByPath = timeTravelByPath
     deltaTableV2.pathInfo.partitionFilters = partitionFilters
     deltaTableV2
@@ -484,6 +484,53 @@ object DeltaTableV2 {
     )
   }
 
+  /**
+   * Creates a new [[DeltaTableV2]]. When
+   * [[DeltaSQLConf.DSV2_ROW_LEVEL_OPERATIONS_ENABLED]] is set, the returned table also implements
+   * [[SupportsRowLevelOperations]]; see [[DeltaTableV2WithRowLevelOperations]].
+   */
+  private def newInstance(
+      spark: SparkSession,
+      path: Path,
+      catalogTable: Option[CatalogTable],
+      tableIdentifier: Option[String],
+      timeTravelOpt: Option[DeltaTimeTravelSpec],
+      options: Map[String, String]): DeltaTableV2 = {
+    val rowLevelOperationsEnabled = spark != null && spark.sessionState != null &&
+      spark.sessionState.conf.getConf(DeltaSQLConf.DSV2_ROW_LEVEL_OPERATIONS_ENABLED)
+    if (rowLevelOperationsEnabled) {
+      new DeltaTableV2WithRowLevelOperations(
+        spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+    } else {
+      new DeltaTableV2(spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+    }
+  }
+
+  /**
+   * A [[DeltaTableV2]] that advertises the DSv2 [[SupportsRowLevelOperations]] interface.
+   *
+   * Spark features such as AUTO CDC flows in Spark Declarative Pipelines only accept targets that
+   * implement this interface, even though they issue their writes as regular MERGE commands.
+   * Delta keeps executing MERGE, UPDATE and DELETE through its own commands: [[DeltaAnalysis]]
+   * converts these commands into Delta commands before Spark's DSv2 row-level rewrite would need
+   * an actual [[RowLevelOperation]], see [[DeltaCommandRowLevelOperationBuilder]].
+   */
+  private[delta] class DeltaTableV2WithRowLevelOperations(
+      spark: SparkSession,
+      path: Path,
+      catalogTable: Option[CatalogTable],
+      tableIdentifier: Option[String],
+      timeTravelOpt: Option[DeltaTimeTravelSpec],
+      options: Map[String, String])
+    extends DeltaTableV2(spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+    with SupportsRowLevelOperations {
+
+    override def newRowLevelOperationBuilder(
+        info: RowLevelOperationInfo): RowLevelOperationBuilder = {
+      new DeltaCommandRowLevelOperationBuilder(info)
+    }
+  }
+
   def apply(
       spark: SparkSession,
       path: Path,
@@ -492,7 +539,7 @@ object DeltaTableV2 {
       options: Map[String, String] = Map.empty[String, String],
       timeTravelOpt: Option[DeltaTimeTravelSpec] = None
   ): DeltaTableV2 = {
-    val deltaTable = new DeltaTableV2(
+    val deltaTable = newInstance(
       spark,
       path,
       catalogTable = catalogTable,
@@ -517,7 +564,7 @@ object DeltaTableV2 {
         // If there is redirection, use the catalogTable of deltaLog.
         val catalogTable = deltaLog.getInitialCatalogTable
         val newPath = new Path(deltaLog.dataPath.toUri)
-        new DeltaTableV2(
+        newInstance(
           spark,
           path = newPath,
           catalogTable = catalogTable,

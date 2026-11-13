@@ -4160,6 +4160,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DSV2_ROW_LEVEL_OPERATIONS_ENABLED =
+    buildConf("dsv2.rowLevelOperations.enabled")
+      .internal()
+      .doc(
+        """When enabled, Delta tables returned by the catalog implement the DSv2
+          |SupportsRowLevelOperations interface, so that Spark features that require it (for
+          |example AUTO CDC flows in Spark Declarative Pipelines) accept Delta targets. MERGE,
+          |UPDATE and DELETE continue to execute through Delta's own commands. This is an
+          |experimental feature under development.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
     buildConf("dml.insert.dfByName.allowImplicitCasts")
       .internal()

@@ -36,7 +36,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
@@ -144,7 +144,12 @@ case class AlterTableSetPropertiesDeltaCommand(
         case k if k == TableCatalog.PROP_COMMENT =>
           false
         case k if k == TableCatalog.PROP_PROVIDER =>
-          throw DeltaErrors.cannotChangeProvider()
+          // Setting the provider to Delta is a no-op. Spark Declarative Pipelines does so when it
+          // updates the schema and properties of an existing table.
+          if (!DeltaSourceUtils.isDeltaDataSourceName(configuration(k))) {
+            throw DeltaErrors.cannotChangeProvider()
+          }
+          false
         case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
           throw DeltaErrors.alterTableSetClusteringTableFeatureException(
             ClusteringTableFeature.name)

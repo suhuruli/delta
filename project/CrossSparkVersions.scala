@@ -224,6 +224,8 @@ import Unidoc._
  *                             dirs are ignored by sbt, so listing a dir a module doesn't use is
  *                             harmless.
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
+ * @param supportPipelinesAutoCdc Whether this Spark version ships Spark Declarative Pipelines with
+ *                                AUTO CDC flows. Enables the spark-pipelines test dependencies.
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
  * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows.
  *   This lives here with the rest of the Spark policy so CI workflows do not fragment refs.
@@ -234,6 +236,7 @@ case class SparkVersionSpec(
   additionalSourceDirs: Seq[String] = Seq.empty,
   supportIceberg: Boolean,
   supportHudi: Boolean = true,
+  supportPipelinesAutoCdc: Boolean = false,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
@@ -325,6 +328,7 @@ object SparkVersionSpec {
       "scala-shims/spark-4.1-4.3"),
     supportIceberg = false,
     supportHudi = false,
+    supportPipelinesAutoCdc = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
@@ -339,6 +343,7 @@ object SparkVersionSpec {
       "scala-shims/spark-4.3"),
     supportIceberg = false,
     supportHudi = false,
+    supportPipelinesAutoCdc = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings
   )

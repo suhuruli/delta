@@ -696,6 +696,17 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
+    // Spark Declarative Pipelines, to test AUTO CDC flows that target Delta tables.
+    libraryDependencies ++= {
+      if (CrossSparkVersions.getSparkVersionSpec().supportPipelinesAutoCdc) {
+        Seq(
+          "org.apache.spark" %% "spark-pipelines" % sparkArtifactVersion.value % "test",
+          "org.apache.spark" %% "spark-pipelines" % sparkArtifactVersion.value % "test"
+            classifier "tests")
+      } else {
+        Seq.empty
+      }
+    },
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
