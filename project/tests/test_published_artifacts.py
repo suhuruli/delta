@@ -121,6 +121,10 @@ SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.3.0": SparkVersionSpec(
         suffix="_4.3", support_iceberg=False, support_hudi=False
     ),
+    # Master/snapshot version; not published.
+    "5.0.0-SNAPSHOT": SparkVersionSpec(
+        suffix="_5.0", support_iceberg=False, support_hudi=False
+    ),
 }
 
 # Keep this map independent from CrossFlinkVersions so this test detects missing artifacts.

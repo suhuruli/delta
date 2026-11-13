@@ -343,14 +343,33 @@ object SparkVersionSpec {
     additionalJavaOptions = java17TestSettings
   )
 
+  /**
+   * Spark master branch (5.0.0-SNAPSHOT). Apache Spark does not publish master snapshots, so
+   * this is a source-built lane: build Spark with project/scripts/build_spark.sh and select it
+   * with -DsparkVersion=master -DsparkArtifactVersion=<version printed by the script>.
+   */
+  private val spark50Snapshot = SparkVersionSpec(
+    fullVersion = "5.0.0-SNAPSHOT",
+    targetJvm = "21",
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.2-4.3",
+      "scala-shims/spark-4.1-4.3",
+      "scala-shims/spark-4.3"),
+    supportIceberg = false,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    sourceBuildDefaultRef = Some("6efbbb3add0769050a0f486911a59ddec5c1b341")
+  )
+
   /** Default Spark version */
   val DEFAULT = spark42
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = None
+  val MASTER: Option[SparkVersionSpec] = Some(spark50Snapshot)
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42, spark43)
+  val ALL_SPECS = Seq(spark40, spark41, spark42, spark43, spark50Snapshot)
 }
 
 /** See docs on top of this file */
